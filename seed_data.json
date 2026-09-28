@@ -1,0 +1,162 @@
+[
+  {
+    "id": "inc-2026-0814-01",
+    "timestamp": "2026-08-14T09:22:15Z",
+    "title": "PostgreSQL Connection Pool Exhaustion on Primary DB",
+    "symptoms": "FATAL: remaining connection slots are reserved for non-replication superuser connections\nActive connections peaked at 500/500 on db-primary-01.us-east-1. User services throwing HTTP 500 'django.db.utils.OperationalError: could not connect to server'. Pgbouncer pool mode 'session' with max_client_conn=1000 saturated.",
+    "root_cause": "A newly deployed analytics worker batch job bypassed PgBouncer and opened 200+ direct persistent connections with long-running idle transactions without idle_in_transaction_session_timeout configured.",
+    "resolution": "1. Terminated rogue idle connections via SELECT pg_terminate_backend(pid) WHERE state = 'idle in transaction' AND state_change < current_timestamp - INTERVAL '5 minutes'.\n2. Updated pgbouncer.ini to enforce default_pool_size=50 and pool_mode=transaction.\n3. Configured idle_in_transaction_session_timeout = '30s' in postgresql.conf and reloaded postgresql.",
+    "severity": "CRITICAL",
+    "affected_system": "Database / PostgreSQL"
+  },
+  {
+    "id": "inc-2026-0819-02",
+    "timestamp": "2026-08-19T14:41:03Z",
+    "title": "SSH Distributed Brute Force & pam_tally2 Lockout Alert",
+    "symptoms": "sshd[19420]: Failed password for invalid user admin from 185.220.101.42 port 54112 ssh2\nAuth log inundated with 4,200 failed authentication events in 3 minutes across bastion-01 and bastion-02. legitimate engineer SSH sessions dropping due to PAM account lockouts and max auth attempts exceeded.",
+    "root_cause": "Publicly exposed port 22 on staging bastion without Fail2ban or IP whitelisting after security group ingress rule was widened for a remote contractor.",
+    "resolution": "1. Restricted AWS Security Group ingress port 22 strictly to the corporate VPN CIDR (10.200.0.0/16).\n2. Installed and started fail2ban with aggressive jail for sshd (maxretry=3, bantime=86400).\n3. Disabled password-based SSH authentication in /etc/ssh/sshd_config (PasswordAuthentication no, PubkeyAuthentication yes) and reloaded sshd.",
+    "severity": "HIGH",
+    "affected_system": "Security / Bastion"
+  },
+  {
+    "id": "inc-2026-0825-03",
+    "timestamp": "2026-08-25T03:17:40Z",
+    "title": "Root Filesystem 100% Inode Exhaustion Despite Free Disk Space",
+    "symptoms": "System alert: No space left on device: '/var/spool/postfix/maildrop'.\nRunning df -h shows /dev/nvme0n1p1 at 38% used (62GB free), but df -i shows Inodes 100% used (4,194,304/4,194,304). Services failing to write logs, lockfiles, or temp sockets.",
+    "root_cause": "A legacy PHP cron script spawned thousands of micro-session files inside /var/lib/php/sessions without garbage collection cron running, generating 3.8 million zero-byte files.",
+    "resolution": "1. Removed session files without glob overflow using: find /var/lib/php/sessions -type f -name 'sess_*' -delete.\n2. Enabled systemd timer php-session-cleanup.timer to purge session files older than session.gc_maxlifetime.\n3. Added Prometheus node_exporter inode alert threshold at 80% capacity.",
+    "severity": "HIGH",
+    "affected_system": "Linux Storage / Inodes"
+  },
+  {
+    "id": "inc-2026-0901-04",
+    "timestamp": "2026-09-01T00:00:22Z",
+    "title": "Expired Ingress TLS Certificate on api.company.io",
+    "symptoms": "Curl client error: SSL certificate problem: certificate has expired (x509: certificate has expired or is not yet valid).\nAll external mobile apps and public API clients rejected with SSL handshake failure. Ingress controller logging: 'TLS handshake error: remote error: tls: bad certificate'.",
+    "root_cause": "cert-manager ACME HTTP01 challenge was failing silently because an updated Cloudflare WAF rule was intercepting and blocking requests to path /.well-known/acme-challenge/* with a JavaScript challenge.",
+    "resolution": "1. Added a Cloudflare WAF Bypass rule for URI Path prefix '/.well-known/acme-challenge/'.\n2. Triggered manual certificate renewal in Kubernetes: cmctl renew api-tls-cert -n ingress-nginx.\n3. Verified new cert valid until 90 days. Added external Blackbox Exporter SSL expiry alert at 14 days and 7 days.",
+    "severity": "CRITICAL",
+    "affected_system": "Networking / TLS & Ingress"
+  },
+  {
+    "id": "inc-2026-0905-05",
+    "timestamp": "2026-09-05T18:12:11Z",
+    "title": "Kubernetes Pod CrashLoopBackOff via OOMKilled (Exit Code 137)",
+    "symptoms": "kubectl get pods shows payment-processor-7c48f877bf-9zklw in CrashLoopBackOff.\nPod inspection shows: Last State: Terminated, Reason: OOMKilled, Exit Code: 137. Node dmesg reports: 'Memory cgroup out of memory: Kill process 28419 (node) score 1024'.",
+    "root_cause": "Payment processing worker had an unbounded in-memory array accumulating unbatched idempotency verification payloads under high traffic spikes. Container memory limit was set to 512Mi with no heap limit configured in Node.js.",
+    "resolution": "1. Increased container memory limit to 2Gi and set --max-old-space-size=1536 in NODE_OPTIONS.\n2. Patched application code to store idempotency tokens in Redis with 24-hour TTL instead of process memory.\n3. Rolled out deployment update and verified cgroup memory usage stabilized below 450MiB.",
+    "severity": "HIGH",
+    "affected_system": "Kubernetes / Payment Service"
+  },
+  {
+    "id": "inc-2026-0909-06",
+    "timestamp": "2026-09-09T08:30:00Z",
+    "title": "Overlapping Crontab Executions Causing CPU Throttling and Database Locks",
+    "symptoms": "Load average on worker-batch-04 spiked from 1.2 to 84.6. System monitoring alerts 'CPU Steal and Load Average critical'. Hundreds of python3 sync_inventory.py processes running simultaneously. Postgres showing row lock contention on inventory_skus table.",
+    "root_cause": "Cron entry was configured as '*/5 * * * * python3 sync_inventory.py'. Due to a third-party API rate limit, each run took 14 minutes, causing subsequent cron runs to spawn concurrently and stack up recursively.",
+    "resolution": "1. Killed hung processes with pkill -9 -f sync_inventory.py.\n2. Wrapped the cron job execution using flock: */5 * * * * /usr/bin/flock -n /var/lock/sync_inventory.lock python3 /opt/jobs/sync_inventory.py >> /var/log/sync.log 2>&1.\n3. Added execution time metric to Prometheus and timeout wrapper: timeout 10m flock ...",
+    "severity": "MEDIUM",
+    "affected_system": "Linux / Cron & Batch Jobs"
+  },
+  {
+    "id": "inc-2026-0912-07",
+    "timestamp": "2026-09-12T11:45:33Z",
+    "title": "Redis Cache Eviction Storm and Command Latency Degradation",
+    "symptoms": "Redis error: OOM command not allowed when used memory > 'maxmemory'.\nApplication response times jumped from 25ms to 1,800ms. Redis SLOWLOG reports commands taking >250ms. used_memory reached 15.9GB on a 16GB cache node.",
+    "root_cause": "maxmemory-policy was left at default 'noeviction' on cache cluster, and a catalog cache key generator forgot to set an EXPIRE TTL on user recommendation sets.",
+    "resolution": "1. Executed CONFIG SET maxmemory-policy volatile-lru dynamically on primary Redis instance.\n2. Backported TTL (86400s) on recommendation cache keys.\n3. Scaled Redis cluster instance to 32GB memory and added memory fragmentation alerts.",
+    "severity": "HIGH",
+    "affected_system": "Cache / Redis"
+  },
+  {
+    "id": "inc-2026-0915-08",
+    "timestamp": "2026-09-15T16:04:19Z",
+    "title": "CoreDNS Packet Drop and 5-Second DNS Latency in Kubernetes Cluster",
+    "symptoms": "Microservices throwing random java.net.UnknownHostException and dial tcp: i/o timeout after exactly 5 seconds.\nkube-system coredns pods running at 98% CPU. conntrack table insertions spiking with UDP drops.",
+    "root_cause": "Alpine Linux musl resolver sends A and AAAA DNS queries in parallel with ndots:5 in /etc/resolv.conf, triggering Linux kernel conntrack UDP race conditions and overwhelming CoreDNS replicas.",
+    "resolution": "1. Scaled CoreDNS deployment from 2 to 8 replicas with horizontal pod autoscaler.\n2. Deployed NodeLocal DNSCache (node-local-dns) DaemonSet across all Kubernetes worker nodes.\n3. Modified pod dnsConfig to ndots:2 to eliminate unnecessary search domain permutations.",
+    "severity": "CRITICAL",
+    "affected_system": "Kubernetes / CoreDNS Networking"
+  },
+  {
+    "id": "inc-2026-0918-09",
+    "timestamp": "2026-09-18T13:20:45Z",
+    "title": "Nginx Upstream 502 Bad Gateway Caused by Worker Starvation & File Descriptors",
+    "symptoms": "Nginx error log: 2026/09/18 13:20:40 [alert] 1042#1042: 1024 worker_connections are not enough\nPublic requests returned HTTP 502 Bad Gateway and HTTP 504 Gateway Timeout. System open file count approached ulimit -n boundary.",
+    "root_cause": "Nginx configuration had worker_connections 1024 and worker_rlimit_nofile unconfigured, while upstream microservices kept connections open without keepalive timeout tuning.",
+    "resolution": "1. Raised /etc/security/limits.conf nofile to 65535.\n2. Updated nginx.conf: worker_connections 8192; and worker_rlimit_nofile 16384;.\n3. Configured upstream keepalive 64; and proxy_http_version 1.1; to reuse sockets effectively.",
+    "severity": "HIGH",
+    "affected_system": "Web Server / Nginx"
+  },
+  {
+    "id": "inc-2026-0920-10",
+    "timestamp": "2026-09-20T07:11:58Z",
+    "title": "Kafka Consumer Group Lag Explosion During Rebalance Storm",
+    "symptoms": "Topic telemetry.events consumer group 'analytics-pipeline' lag spiked to 4.2 million messages.\nKafka brokers logging: 'PreparingRebalance ... marking member dead'. Consumers repeatedly failing with CommitFailedException: 'Commit cannot be completed since the group has already rebalanced'.",
+    "root_cause": "Individual consumer message processing took longer than max.poll.interval.ms (300,000ms) due to slow Elasticsearch downstream bulk indexing, causing Kafka broker to declare the consumer dead and rebalance constantly.",
+    "resolution": "1. Increased max.poll.interval.ms to 900,000ms (15 mins) and lowered max.poll.records from 500 to 50.\n2. Implemented asynchronous processing pool with circuit breaker for Elasticsearch indexing.\n3. Consumer group rebalance storm ceased and lag drained within 18 minutes.",
+    "severity": "HIGH",
+    "affected_system": "Message Broker / Apache Kafka"
+  },
+  {
+    "id": "inc-2026-0922-11",
+    "timestamp": "2026-09-22T21:05:12Z",
+    "title": "AWS S3 403 Access Denied Due to IAM KMS Key Policy Drift",
+    "symptoms": "Application error: com.amazonaws.services.s3.model.AmazonS3Exception: Access Denied (Service: Amazon S3; Status Code: 403; Error Code: AccessDenied).\nProduction invoicing pipeline unable to read customer receipt PDFs from s3://prod-receipts-archive.",
+    "root_cause": "Terraform apply of a central KMS CMK module accidentally overwrote kms:Decrypt permissions for the EKS node instance IAM role.",
+    "resolution": "1. Restored KMS Key Policy statement granting kms:Decrypt and kms:GenerateDataKey to arn:aws:iam::123456789012:role/eks-node-role.\n2. Added automated Terraform drift detection test in CI/CD pipeline to block unreviewed KMS policy updates.\n3. Retried failed invoice SQS messages.",
+    "severity": "HIGH",
+    "affected_system": "Cloud Infrastructure / AWS IAM & S3"
+  },
+  {
+    "id": "inc-2026-0924-12",
+    "timestamp": "2026-09-24T05:42:01Z",
+    "title": "RabbitMQ Socket Descriptor and Erlang File Limit Exhaustion",
+    "symptoms": "RabbitMQ log: =ERROR REPORT==== file_handle_cache: maximum number of file handles (1024) exhausted\nAll publishing microservices blocked. RabbitMQ management UI unreachable or timing out on port 15672.",
+    "root_cause": "Systemd service override for rabbitmq-server omitted LimitNOFILE=65536, defaulting to 1024 file descriptors when TCP connections reached 800.",
+    "resolution": "1. Created /etc/systemd/system/rabbitmq-server.service.d/limits.conf with [Service] LimitNOFILE=65536.\n2. Executed systemctl daemon-reload && systemctl restart rabbitmq-server.\n3. Confirmed File Descriptors available in rabbitmqctl status increased to 65,536.",
+    "severity": "HIGH",
+    "affected_system": "Message Broker / RabbitMQ"
+  },
+  {
+    "id": "inc-2026-0925-13",
+    "timestamp": "2026-09-25T17:15:39Z",
+    "title": "Elasticsearch Cluster RED: Unassigned Primary Shards from High Disk Watermark",
+    "symptoms": "GET /_cluster/health returns status 'red', active_primary_shards_percent at 72.4%.\nLog: [high disk watermark [90%] exceeded on [node-03] free: 4.1gb[4.8%], shards will be relocated away from this node]. Primary shards for logstash-2026.09.25 marked UNASSIGNED.",
+    "root_cause": "Sudden debug log flood pushed node-03 past the 95% flood_stage watermark, forcing Elasticsearch to lock index into read-only mode and reject primary shard allocations.",
+    "resolution": "1. Deleted 30-day-old indexes using curator / dev-tools to free 120GB disk space.\n2. Unlocked cluster index blocks: PUT /_all/_settings { 'index.blocks.read_only_allow_delete': null }.\n3. Ran POST /_cluster/reroute?retry_failed=true to reallocate unassigned shards. Cluster health turned GREEN.",
+    "severity": "CRITICAL",
+    "affected_system": "Observability / Elasticsearch"
+  },
+  {
+    "id": "inc-2026-0926-14",
+    "timestamp": "2026-09-26T22:30:10Z",
+    "title": "Linux nf_conntrack Table Full Dropping TCP Packets",
+    "symptoms": "kernel: [102914.881204] nf_conntrack: table full, dropping packet.\nOutbound API calls failing with random timeouts. New inbound connections rejected before TCP three-way handshake completed.",
+    "root_cause": "Microservices with short-lived HTTP/1.0 connections left tens of thousands of sockets in TIME_WAIT, exceeding net.netfilter.nf_conntrack_max (set to default 65536).",
+    "resolution": "1. Doubled conntrack table size: sysctl -w net.netfilter.nf_conntrack_max=262144.\n2. Reduced TIME_WAIT timeout: sysctl -w net.netfilter.nf_conntrack_tcp_timeout_time_wait=30.\n3. Persisted changes in /etc/sysctl.d/99-conntrack.conf and rolled out HTTP keep-alive client configs.",
+    "severity": "CRITICAL",
+    "affected_system": "Linux Kernel / Networking"
+  },
+  {
+    "id": "inc-2026-0927-15",
+    "timestamp": "2026-09-27T10:14:02Z",
+    "title": "PostgreSQL Autovacuum Freeze Lock Contention on Billing Invoices Table",
+    "symptoms": "Postgres alert: Transaction ID wraparound danger for database 'billing_prod'.\nQueries against public.invoices blocked indefinitely. Lock graph shows autovacuum (to prevent wraparound) holding ExclusiveLock while app queries queue behind it.",
+    "root_cause": "Aggressive autovacuum_vacuum_cost_limit was too low (200), making vacuum freeze take 26 hours during peak business hours without dedicated maintenance_work_mem.",
+    "resolution": "1. Raised autovacuum_vacuum_cost_limit to 2000 and vacuum_cost_page_miss to 2 in postgresql.conf.\n2. Increased maintenance_work_mem to 2GB.\n3. Cancelled non-critical background queries to allow autovacuum to complete rapidly. Verified datfrozenxid advanced safely.",
+    "severity": "HIGH",
+    "affected_system": "Database / PostgreSQL"
+  },
+  {
+    "id": "inc-2026-0928-16",
+    "timestamp": "2026-09-28T04:02:18Z",
+    "title": "Docker Daemon Socket Deadlock Hanging New Container Spawns",
+    "symptoms": "CI runner error: Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\nExisting containers continued running, but dockerd hung on API requests. systemctl status docker showed active (running) with high unkillable D-state threads.",
+    "root_cause": "A defective build script mounted an NFS volume directly into container root, and NFS stale mount caused the containerd storage driver to deadlock in kernel sys_openat.",
+    "resolution": "1. Unmounted stale NFS share with umount -f -l /mnt/ci-cache.\n2. Sent SIGABRT to dockerd to dump goroutines, then restarted dockerd and containerd cleanly.\n3. Added autofs with timeout=10 and soft mount options for all NFS mounts to prevent daemon hangs.",
+    "severity": "HIGH",
+    "affected_system": "Container Runtime / Docker"
+  }
+]

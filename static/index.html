@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Incident Recall — AI SRE Memory Engine</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- Top Navigation & Status Bar -->
+  <header class="navbar">
+    <div class="brand">
+      <div class="logo-icon">🧠</div>
+      <div>
+        <h1 class="logo-title">Incident Recall</h1>
+        <p class="logo-sub">AI SRE Agent with Persistent Hindsight Memory</p>
+      </div>
+    </div>
+
+    <div class="nav-controls">
+      <div class="status-badge" id="hindsightStatus">
+        <span class="pulse-dot"></span>
+        <span id="hindsightStatusText">Connecting Hindsight...</span>
+      </div>
+      <button id="seedBtn" class="btn btn-secondary" title="Populate Hindsight with ~16 realistic Linux/infra incidents">
+        <span class="btn-icon">⚡</span> Seed 16 Past Incidents
+      </button>
+      <button id="toggleTraceBtn" class="btn btn-outline">
+        <span class="btn-icon">📡</span> Memory Trace Panel
+      </button>
+    </div>
+  </header>
+
+  <!-- Live Hindsight Memory Trace Drawer (Key for Demo Video!) -->
+  <aside id="traceDrawer" class="trace-drawer">
+    <div class="trace-header">
+      <div class="trace-title-group">
+        <span class="trace-badge">LIVE TELEMETRY</span>
+        <h3>Hindsight Memory Call Inspector</h3>
+      </div>
+      <div class="trace-header-actions">
+        <span id="traceCountBadge" class="badge-pill">0 traces</span>
+        <button id="clearTracesBtn" class="btn-mini">Clear</button>
+        <button id="closeTraceBtn" class="close-btn">&times;</button>
+      </div>
+    </div>
+    <p class="trace-desc">
+      Inspect live <code>RETAIN</code> and <code>RECALL</code> REST requests and responses dispatched to Hindsight Cloud.
+    </p>
+    <div id="traceList" class="trace-list">
+      <div class="trace-empty">No calls recorded yet. Submit an incident or click Seed to watch live memory calls.</div>
+    </div>
+  </aside>
+
+  <!-- Main Container -->
+  <main class="container">
+
+    <!-- Incident Submission & Quick Presets -->
+    <section class="card form-card">
+      <div class="card-header">
+        <div>
+          <h2>Submit Active Incident</h2>
+          <p class="subtitle">Triggers Hindsight <strong>Recall</strong> &rarr; Groq LLM Diagnosis &rarr; Hindsight <strong>Retain</strong></p>
+        </div>
+        <div class="quick-samples">
+          <span class="quick-label">Try sample:</span>
+          <button class="chip" data-sample="pg_conn">Postgres Pool Full</button>
+          <button class="chip" data-sample="oom_k8s">K8s OOMKilled</button>
+          <button class="chip" data-sample="ssh_brute">SSH Brute Force</button>
+          <button class="chip" data-sample="tls_cert">Expired TLS</button>
+          <button class="chip" data-sample="conntrack">Conntrack Table Full</button>
+        </div>
+      </div>
+
+      <form id="incidentForm">
+        <div class="form-row">
+          <div class="form-group flex-2">
+            <label for="incidentTitle">Incident Title / Summary *</label>
+            <input
+              type="text"
+              id="incidentTitle"
+              placeholder="e.g. Postgres remaining connection slots exhausted on db-primary"
+              required
+            />
+          </div>
+
+          <div class="form-group flex-1">
+            <label for="affectedSystem">Affected System *</label>
+            <select id="affectedSystem" required>
+              <option value="Database / PostgreSQL">Database / PostgreSQL</option>
+              <option value="Kubernetes / CoreDNS Networking">Kubernetes / CoreDNS Networking</option>
+              <option value="Kubernetes / Payment Service">Kubernetes / Payment Service</option>
+              <option value="Security / Bastion">Security / Bastion</option>
+              <option value="Linux Storage / Inodes">Linux Storage / Inodes</option>
+              <option value="Networking / TLS & Ingress">Networking / TLS & Ingress</option>
+              <option value="Web Server / Nginx">Web Server / Nginx</option>
+              <option value="Cache / Redis">Cache / Redis</option>
+              <option value="Message Broker / Apache Kafka">Message Broker / Apache Kafka</option>
+              <option value="Linux Kernel / Networking">Linux Kernel / Networking</option>
+              <option value="Observability / Elasticsearch">Observability / Elasticsearch</option>
+            </select>
+          </div>
+
+          <div class="form-group flex-half">
+            <label for="severitySelect">Severity</label>
+            <select id="severitySelect">
+              <option value="CRITICAL">CRITICAL</option>
+              <option value="HIGH" selected>HIGH</option>
+              <option value="MEDIUM">MEDIUM</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="incidentSymptoms">Symptoms &amp; Error Log (Paste raw stack traces or journalctl output) *</label>
+          <textarea
+            id="incidentSymptoms"
+            rows="5"
+            placeholder="e.g. FATAL: remaining connection slots are reserved for non-replication superuser connections... Active client connections 500/500."
+            required
+          ></textarea>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" id="submitBtn" class="btn btn-primary">
+            <span class="btn-icon">⚡</span> Run Recall &amp; Generate Fix
+          </button>
+          <span id="formFeedback" class="form-feedback"></span>
+        </div>
+      </form>
+    </section>
+
+    <!-- AI Suggestion & Recalled Memories Output (The Core Demo View) -->
+    <section id="resultsSection" class="results-section hidden">
+      
+      <!-- Hindsight Recall Highlights Banner -->
+      <div class="recall-banner">
+        <div class="recall-banner-header">
+          <div class="recall-tag">
+            <span class="memory-spark">⚡</span> HINDSIGHT MEMORY RECALL
+          </div>
+          <span id="recalledCountBadge" class="badge-confidence">3 Past Incidents Recalled</span>
+        </div>
+        <h3 class="recall-banner-title">Grounded in Similar Past Incidents</h3>
+        <p class="recall-banner-desc">
+          Before generating advice, Hindsight searched historical incidents using vector similarity over symptoms and system tags:
+        </p>
+
+        <!-- Recalled Incident Cards Grid -->
+        <div id="recalledIncidentsList" class="recalled-grid">
+          <!-- Populated dynamically via JS -->
+        </div>
+      </div>
+
+      <!-- LLM Suggested Fix Section -->
+      <div class="card ai-card">
+        <div class="ai-card-header">
+          <div class="ai-title-group">
+            <span class="ai-pill">LLM INCIDENT COMMANDER</span>
+            <h2 id="aiFixTitle">Recommended SRE Remediation &amp; Diagnosis</h2>
+          </div>
+          <div class="ai-meta">
+            <span id="llmModelBadge" class="badge-pill">Groq (openai/gpt-oss-120b)</span>
+            <button id="copyFixBtn" class="btn-mini">Copy Fix</button>
+          </div>
+        </div>
+
+        <div id="aiFixContent" class="ai-content markdown-body">
+          <!-- Markdown / HTML generated fix -->
+        </div>
+
+        <!-- Live Retain Confirmation Footer -->
+        <div class="retain-footer">
+          <div class="retain-indicator">
+            <span class="green-check">✓</span>
+            <div>
+              <strong>Retained to Hindsight:</strong> This incident and its verified fix were retained back into persistent memory bank for future incidents.
+            </div>
+          </div>
+          <button id="viewRetainTraceBtn" class="btn-link">View Raw Retain Trace &rarr;</button>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Historical Incidents List -->
+    <section class="card history-card">
+      <div class="card-header history-header">
+        <div>
+          <h2>Past Incidents in Hindsight Memory</h2>
+          <p class="subtitle">Complete persistent incident memory repository</p>
+        </div>
+        <div class="history-filters">
+          <input
+            type="text"
+            id="searchInput"
+            placeholder="Search symptoms, logs, or titles..."
+            class="input-search"
+          />
+          <span id="totalMemoryCount" class="badge-pill">16 Incidents</span>
+        </div>
+      </div>
+
+      <div id="incidentHistoryList" class="history-list">
+        <!-- Populated dynamically -->
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <p>
+      <strong>Incident Recall</strong> &bull; Persistent Memory by <a href="https://hindsight.vectorize.io/" target="_blank">Hindsight (Vectorize)</a> &bull; Fast Inference by Groq
+    </p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+{
+  "name": "Incident Recall - AI SRE Memory Engine",
+  "description": "AI agent that remembers past infrastructure and security incidents with persistent Hindsight memory to suggest grounded fixes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
